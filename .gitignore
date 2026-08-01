@@ -1,0 +1,7 @@
+# env / secrets
+*.env
+.env
+*.env.local
+
+# synthea result
+synthea/output
