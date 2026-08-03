@@ -3,5 +3,5 @@
 .env
 *.env.local
 
-# synthea result
-synthea/output
+# synthea (generated data + jar, not tracked — see README for regeneration steps)
+synthea_data/
