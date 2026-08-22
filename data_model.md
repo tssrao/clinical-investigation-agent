@@ -1,6 +1,6 @@
 # Synthea Data Model — Reference
 
-Generated from `synthea_data/output/csv/` (Massachusetts population export). This maps how the 18 CSV files tie together so you don't have to reverse-engineer joins file by file. For dataset-specific quirks (missing fields, coverage percentages, structural gaps), see the design doc §4.3.2 — this file is purely about *structure*, not findings.
+Generated from `synthea_data/output/csv/` (Massachusetts population export, ~2,300 patients). This maps how the 18 CSV files tie together so you don't have to reverse-engineer joins file by file. For dataset-specific quirks (missing fields, coverage percentages, structural gaps), see the design doc §4.3.2 — this file is purely about *structure*, not findings.
 
 ---
 
@@ -49,7 +49,7 @@ None of these are encrypted — they're plain UUIDs Synthea generates as join ke
 | `payers` | `Id` | `NAME`, `OWNERSHIP`, `AMOUNT_COVERED`, `COVERED_ENCOUNTERS`, etc. | The insurer (e.g. Medicare). Referenced by `encounters.PAYER`, `medications.PAYER`, `payer_transitions.PAYER/SECONDARY_PAYER`, and `claims.PRIMARYPATIENTINSURANCEID/SECONDARYPATIENTINSURANCEID` (misleadingly named — these are payer IDs, not a separate insurance-policy table). |
 | `payer_transitions` | none (junction) | `PATIENT`, `PAYER`, `SECONDARY_PAYER`, `START_DATE`/`END_DATE` | Which payer covered a patient over which date range — a patient can have multiple rows as coverage changes over time. |
 | `claims` | `Id` | `PATIENTID`, `PROVIDERID`, `PRIMARYPATIENTINSURANCEID`, `APPOINTMENTID` (→ `encounters.Id`), `DIAGNOSIS1-8` (SNOMED codes, not FKs), `STATUS1`/`STATUS2`/`STATUSP` | One claim per billable encounter. `STATUS*` is always `BILLED`/`CLOSED` in this dataset — no `DENIED` state exists (design doc §4.3.2). |
-| `claims_transactions` | `ID` | `CLAIMID` (→ `claims.Id`), `PATIENTID`, `APPOINTMENTID` (→ `encounters.Id`), `PROCEDURECODE`, `AMOUNT`, `PAYMENTS`, `ADJUSTMENTS`, `OUTSTANDING` | Line-item charges within a claim — this is the actual billing detail (19k+ rows even at n=25). Many rows per claim. |
+| `claims_transactions` | `ID` | `CLAIMID` (→ `claims.Id`), `PATIENTID`, `APPOINTMENTID` (→ `encounters.Id`), `PROCEDURECODE`, `AMOUNT`, `PAYMENTS`, `ADJUSTMENTS`, `OUTSTANDING` | Line-item charges within a claim — this is the actual billing detail (2.2M+ rows at the ~2,300-patient dev scale). Many rows per claim. |
 
 ---
 

@@ -303,15 +303,15 @@ MLflow is used for more than serving one model:
 
 #### 4.3.2 Findings from the generated data
 
-The following findings come from inspecting a real Synthea CSV export (25-patient Massachusetts population, `synthea-with-dependencies.jar` release build) and directly shape the design decisions above and elsewhere in this document.
+The following findings come from inspecting a real Synthea CSV export (2,338-patient Massachusetts population — `-p 2000`, `synthea-with-dependencies.jar` release build) and directly shape the design decisions above and elsewhere in this document. An earlier 119-patient (`-p 100`) pilot run first surfaced these patterns; the numbers below are from the scaled-up run and confirm they hold, not an initial exploration.
 
 | Finding | Verified detail | Design implication |
 |---|---|---|
-| **18 real tables generate**, real volume even at n=25 | 17,231 observations, 3,699 procedures, 1,038 medications, 2,461 claims, 19,207 claims_transaction line items | Scales fine to 1,000–5,000 patients for a realistic dev population |
-| **Labs support genuine trend reconstruction** | One patient had 34 separate creatinine readings across their history | The anchor "why did creatinine double" scenario has real multi-point data to reason over, not a single value |
-| **Medications causally link to conditions** | `medications.REASONCODE` / `REASONDESCRIPTION` populated on 78% of rows (806/1037), e.g. tacrolimus → "history of renal transplant" | Causal-chain reasoning is grounded in structured data — the LLM doesn't have to infer *why* a drug was started |
-| **No claim denial/rejection field exists** | Every value of `claims.STATUS1/STATUS2/STATUSP` across 2,461 claims is either `BILLED` or `CLOSED` — no `DENIED` state anywhere | "Why was this claim rejected?" is not answerable with this data. Reframed to: "explain how this claim's charges were generated and covered" / "summarize this claim's billing lifecycle" |
-| **No free text anywhere in the dataset** | Every `observations.TYPE == "text"` row (6,478 of them) is a structured survey field (address, employment, education) — not narrative clinical notes | No "summarize the physician's note" question is possible, at any patient count. This is a structural property of Synthea, not a sampling issue |
+| **18 real tables generate**, real volume at dev scale | 1,764,300 observations, 385,409 procedures, 117,442 medications, 255,653 claims, 2,247,679 claims_transaction line items | Confirmed workable at 1,000–5,000 patients for a realistic dev population — table density scales roughly linearly, no surprises at scale |
+| **Labs support genuine trend reconstruction** | One patient had 1,494 separate creatinine readings across their history; 967 patients had 5+ readings | The anchor "why did creatinine double" scenario has real multi-point data to reason over, not a single value, and there's a wide pool of qualifying patients to pick example cases from |
+| **Medications causally link to conditions** | `medications.REASONCODE` / `REASONDESCRIPTION` populated on 80.9% of rows (94,988/117,442), e.g. tacrolimus → "history of renal transplant" | Causal-chain reasoning is grounded in structured data — the LLM doesn't have to infer *why* a drug was started. Coverage % is stable versus the 119-patient pilot (was 78%), so this isn't a small-sample artifact |
+| **No claim denial/rejection field exists** | Every value of `claims.STATUS1/STATUS2/STATUSP` across 255,653 claims is either `BILLED` or `CLOSED` — no `DENIED` state anywhere | "Why was this claim rejected?" is not answerable with this data. Reframed to: "explain how this claim's charges were generated and covered" / "summarize this claim's billing lifecycle" |
+| **No free text anywhere in the dataset** | Every `observations.TYPE == "text"` row (673,337 of them) is a structured survey field (address, employment, education, PRAPARE/PhenX social-determinants screening) — not narrative clinical notes | No "summarize the physician's note" question is possible, at any patient count. This is a structural property of Synthea, not a sampling issue |
 | **Claims and claims_transactions are real, joinable tables** | Patient → claim → line-item charges with procedure/diagnosis codes, amounts, payer coverage | Billing summary and cost-analysis questions are fully supported |
 
 #### 4.3.3 The one remaining data gap: drug interactions
@@ -391,4 +391,4 @@ Sequenced so each phase is a working, testable slice before the next begins — 
 ## 7. Open Decisions (resolve during implementation, not architecture-level)
 
 1. **Production hosting** — see Section 6.
-2. **Population size for the "real" dev dataset** — 1,000–5,000 patients recommended based on verified table density at n=25; confirm `REASONCODE` coverage percentage holds at scale before finalizing.
+2. 2,000-patient dev population generated (`-p 2000` → 2,338 total including deceased). `REASONCODE` coverage held at scale (80.9% vs. 78% at the earlier 119-patient pilot — see §4.3.2), confirming the 1,000–5,000 recommendation. Can regenerate at up to 5,000 later if denser claims/observation volume is needed for the RAGAS golden set.

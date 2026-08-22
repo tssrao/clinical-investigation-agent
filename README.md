@@ -93,7 +93,9 @@ The `synthea_data/` folder (generated CSV/FHIR output + the Synthea jar) is **no
 ```bash
 mkdir synthea_data && cd synthea_data
 curl -sL -o synthea-with-dependencies.jar https://github.com/synthetichealth/synthea/releases/download/master-branch-latest/synthea-with-dependencies.jar
-java -jar synthea-with-dependencies.jar --exporter.csv.export=true --exporter.baseDirectory=./output -p 100 Massachusetts
+java -Xmx4g -jar synthea-with-dependencies.jar --exporter.csv.export=true --exporter.baseDirectory=./output -p 2000 Massachusetts
 ```
+
+`-p 2000` targets 2,000 *living* patients — Synthea additionally exports everyone who died during their simulated lifetime, so the actual `patients.csv` row count comes out higher (2,338 in the current dev dataset). `-Xmx4g` raises the JVM heap; bump it further if generating a larger population (up to the 5,000 recommended ceiling — see the design doc §7) causes an out-of-memory error.
 
 This pulls the latest `master-branch-latest` Synthea build without a pinned seed, so patient records will differ slightly between runs. That's expected: the agent answers questions against whatever patient data is currently loaded, not a fixed benchmark set.
