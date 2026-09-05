@@ -5,3 +5,13 @@
 
 # synthea (generated data + jar, not tracked — see README for regeneration steps)
 synthea_data/
+
+# python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+
+# jupyter
+.ipynb_checkpoints/
