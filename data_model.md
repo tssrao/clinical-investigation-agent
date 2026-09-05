@@ -135,6 +135,10 @@ medications_df.merge(conditions_df, left_on=["PATIENT", "REASONCODE"], right_on=
 
 ## 5. Where to look next
 
+- **Join safety (cardinality, fan-out, dedup) for every join in this file** → `join_reference.md`.
+  Read it before writing any SQL that joins two of these tables together - several of the joins
+  above look like simple 1:1 lookups but aren't (e.g. `claims.APPOINTMENTID`, `REASONCODE` causal
+  chains, any two clinical tables joined directly on `ENCOUNTER`).
 - Dataset-specific findings (coverage %, missing fields, what's NOT queryable) → design doc §4.3.2 and §4.5.
 - How this schema maps to Postgres tables/Alembic migrations → design doc §5, Phase 0.
 - RBAC scoping over this schema (Doctor vs. Insurance Adjuster column/table access) → design doc §2.2.

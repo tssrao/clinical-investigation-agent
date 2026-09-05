@@ -4,27 +4,39 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project status
 
-Pre-implementation. There is no application code yet — `main.py` is a placeholder stub, and `notebooks/eda.ipynb` is exploratory analysis of the raw Synthea CSV export (dtype coercion, distribution plots, per-column exploration). The real build starts at Phase 0 (data foundation: Postgres schema + Alembic + loader script) per the build plan in the design doc. Before writing code, check the design doc's Phase table (Section 5) to see what phase is actually in progress — don't assume infrastructure (Postgres, Redis, Celery, MLflow, etc.) is wired up just because it's listed in the tech stack.
+Phase 0 in progress (data foundation). Repo layout is now `backend/` (Python app, `pyproject.toml`/`uv.lock` live here) + `notebooks/` (EDA, untouched by the restructure — still run from `notebooks/`, paths there are relative to that folder) + `frontend/` (reserved, empty until Phase 7) + root-level docs/`docker-compose.yml`. The 18-table Synthea schema exists as SQLAlchemy models (`backend/app/db/models/`) and an initial Alembic migration (`backend/alembic/versions/0001_initial_synthea_schema.py`), but nothing has been loaded into a real Postgres yet — no loader script, no lookup tables (RxNorm/ICD-10/LOINC), no app code beyond the schema. Before writing code, check the design doc's Phase table (Section 5) to see what phase is actually in progress — don't assume infrastructure (Redis, Celery, MLflow, etc.) is wired up just because it's listed in the tech stack.
 
 ## Essential reading before non-trivial work
 
 - **`clinical-investigation-agent-design.md`** — the full architecture, domain models, RBAC design, data findings, capability matrix, known limitations, and phase-by-phase build plan. Read this first; it is the source of truth for design decisions, not this file.
 - **`data_model.md`** — how the 18 Synthea CSV tables join together (key patterns, entity groups, ER diagram, join recipes). Read this before writing any query or loader touching Synthea data.
+- **`join_reference.md`** — join *safety*: verified cardinality/fan-out/dedup behavior for every join in `data_model.md` (e.g. `claims` isn't 1:1 with `encounters`, `REASONCODE` causal-chain joins over-match, joining two clinical tables directly on `ENCOUNTER` cross-products them). Read this before writing the SQL Tool's join logic or any NL→SQL prompt — it's the difference between correct and silently-duplicated query results.
 - **`README.md`** — quick orientation + how to regenerate `synthea_data/` (not committed; synthetic data regenerated on demand via the Synthea jar, unpinned seed).
 
 ## Commands
 
-Dependency management is via `uv` (see `uv.lock`, `pyproject.toml`, `requires-python = ">=3.12"`).
+Dependency management is via `uv`, run from **`backend/`** (see `backend/uv.lock`, `backend/pyproject.toml`, `requires-python = ">=3.12"`).
 
 ```bash
+cd backend
 uv sync                     # install/sync dependencies
 uv run pytest               # run tests (pytest + pytest-asyncio configured; no tests written yet)
 uv run ruff check .         # lint
 uv run ruff format .        # format
-uv run jupyter lab          # work in notebooks/
 ```
 
-There is no build/run command for an application yet since none exists. DB schema changes, once Phase 0 lands, go through Alembic migrations — never hand-edit the schema.
+`notebooks/` has its own kernel (registered against `backend/.venv`) but isn't part of the `backend/` uv project — run `uv run --directory backend jupyter lab` from repo root, or open `notebooks/eda.ipynb` directly if the kernel's already registered.
+
+### Database (Postgres + pgvector, via Docker Compose)
+
+```bash
+docker compose up -d postgres         # from repo root — brings up Postgres+pgvector on localhost:5432
+cd backend
+uv run alembic upgrade head           # applies all migrations, including 0001 (full 18-table Synthea schema)
+uv run alembic revision --autogenerate -m "..."   # after changing a model in app/db/models/
+```
+
+Connection settings come from `.env` at the repo root (copy `.env.example`) — `app/core/config.py` reads it, and `alembic/env.py` reads the same `Settings` object rather than `alembic.ini`'s placeholder URL. There is no build/run command for the application itself yet (Phase 1). **DB schema changes always go through Alembic migrations — never hand-edit the schema, never call `Base.metadata.create_all()` outside of migration 0001.**
 
 ### Regenerating synthetic data
 
