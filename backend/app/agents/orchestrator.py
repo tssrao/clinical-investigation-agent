@@ -26,6 +26,7 @@ from app.core.config import settings
 from app.db.models.investigation import Artifact, Investigation, Report, Task
 from app.db.session import SessionLocal
 from app.tools.sql_tool import run_sql_tool
+from app.tools.timeline_tool import build_timeline
 
 MAX_REVIEW_ROUNDS = 2
 
@@ -66,6 +67,18 @@ def _execute_task(tool: str, purpose: str, patient_id: str | None) -> tuple[dict
         })
         return content, result.sql, "sql_result", result.success
 
+    if tool == "timeline":
+        if not patient_id:
+            return {"error": "timeline requires a patient_id"}, None, "timeline", False
+        result = build_timeline(patient_id)
+        content = _json_safe({
+            "patient_id": result.patient_id,
+            "event_count": result.event_count,
+            "events": [{"event_date": e.event_date, "category": e.category, "description": e.description}
+                       for e in result.events],
+        })
+        return content, f"timeline for patient {patient_id}", "timeline", True
+
     raise NotImplementedError(f"tool '{tool}' is not implemented yet (Phase 3)")
 
 
@@ -78,6 +91,16 @@ def _summarize_artifacts(artifacts: list[Artifact]) -> str:
             lines.append(
                 f"- [{a.type}] SQL: {content.get('sql')} | "
                 f"{content.get('row_count')} row(s) | sample: {sample}"
+            )
+        elif a.type == "timeline":
+            events = content.get("events", [])
+            first_last = f"{events[0]['event_date']} .. {events[-1]['event_date']}" if events else "n/a"
+            # a compact sample, not all events - a rich patient can have 800+,
+            # which would blow up the Reviewer prompt for no benefit
+            sample = events[:5]
+            lines.append(
+                f"- [{a.type}] {content.get('event_count')} event(s) spanning {first_last} | "
+                f"earliest events: {sample}"
             )
         else:
             lines.append(f"- [{a.type}] {content}")
@@ -189,8 +212,9 @@ def run_investigation(question: str, patient_id: str | None = None, role: str | 
         executive_summary = _generate_executive_summary(
             question, plan.goal, _summarize_artifacts(all_artifacts)
         )
+        timeline_artifact = next((a for a in all_artifacts if a.type == "timeline"), None)
         sections = {
-            "investigation_timeline": None,  # Timeline tool: Phase 3
+            "investigation_timeline": timeline_artifact.content if timeline_artifact else None,
             "evidence": [
                 {"artifact_id": a.id, "type": a.type, "source": a.source, "content": a.content}
                 for a in all_artifacts

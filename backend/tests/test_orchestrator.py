@@ -103,3 +103,16 @@ class TestRunInvestigationIntegration:
         assert inv.report is not None
         # round is never allowed past the hard cap (design doc 3.3: 2 extra rounds)
         assert all(t.round <= 2 for t in inv.tasks)
+
+    def test_timeline_question_plans_a_timeline_task_and_populates_report(self):
+        inv = run_investigation(
+            "Give me a chronological timeline of this patient's care history.",
+            patient_id="23d14605-b881-65ba-c09e-0ecf40ebfeff",
+        )
+        assert inv.status == "complete"
+        assert any(t.tool == "timeline" for t in inv.tasks)
+        timeline_section = inv.report.sections["investigation_timeline"]
+        assert timeline_section is not None
+        assert timeline_section["event_count"] > 0
+        # chronological, and the very first known event for this patient
+        assert timeline_section["events"][0]["event_date"] == "1958-05-31T22:17:10+00:00"
