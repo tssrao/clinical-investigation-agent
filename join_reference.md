@@ -206,7 +206,23 @@ section - the two can diverge, and which one is "correct" depends on the questio
 
 ---
 
-## 8. Quick checklist for the NL→SQL tool
+## 8. `claims_transactions.PATIENTINSURANCEID` does not reference `payers.Id`
+
+Despite the name, `PATIENTINSURANCEID` is **not** a `payers.Id` foreign key. Confirmed against real
+loaded data: sample `PATIENTINSURANCEID` values never appear in `payers.Id`, but always appear in
+`payer_transitions.MEMBERID` - a specific membership/plan-instance identifier, not the payer
+(insurance company) row itself. This was originally modeled as a `ForeignKey("payers.Id")`, which
+caused real `psycopg2.errors.ForeignKeyViolation` failures during data load; the constraint was
+removed (migration `6753bae4d5f5`) since the referenced column isn't a key we can point a DB
+constraint at.
+
+**Safe pattern:** to resolve `PATIENTINSURANCEID` to a human-readable payer, join through
+`payer_transitions` on `MEMBERID`, not directly to `payers`:
+`claims_transactions.PATIENTINSURANCEID → payer_transitions.MEMBERID → payer_transitions.PAYER → payers.Id`.
+
+---
+
+## 9. Quick checklist for the NL→SQL tool
 
 - [ ] Does the query join two child tables (both one-to-many off the same parent) directly? →
       Aggregate each side first, or don't join them at all.
@@ -221,3 +237,5 @@ section - the two can diverge, and which one is "correct" depends on the questio
 - [ ] Does the query `INNER JOIN` from `patients`/`encounters` when the user asked for "everything"
       about a patient? → Use `LEFT JOIN`; several tables (`allergies` especially) have partial
       coverage by design, not by data error.
+- [ ] Does the query join `claims_transactions.PATIENTINSURANCEID` directly to `payers.Id`? → It
+      doesn't reference `payers.Id` at all; go through `payer_transitions.MEMBERID` first (Section 8).

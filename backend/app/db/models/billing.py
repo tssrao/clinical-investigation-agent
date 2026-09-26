@@ -157,9 +157,12 @@ class ClaimTransaction(Base):
         "APPOINTMENTID", String(36), ForeignKey("encounters.Id"), index=True
     )
     linenote: Mapped[str | None] = mapped_column("LINENOTE", Text)
-    patientinsurance_id: Mapped[str | None] = mapped_column(
-        "PATIENTINSURANCEID", String(36), ForeignKey("payers.Id")
-    )
+    # NOT a payers.Id reference despite the name - it's payer_transitions.MEMBERID
+    # (a specific membership/plan instance, not the payer/insurance-company row
+    # itself), confirmed against real data: this value never appears in payers.csv
+    # and always appears in payer_transitions.csv's MEMBERID column. No FK - the
+    # referenced column isn't a primary/unique key we can point a constraint at.
+    patientinsurance_id: Mapped[str | None] = mapped_column("PATIENTINSURANCEID", String(36), index=True)
     feescheduleid: Mapped[str | None] = mapped_column("FEESCHEDULEID", String(32))
     provider_id: Mapped[str | None] = mapped_column("PROVIDERID", String(36), ForeignKey("providers.Id"), index=True)
     supervising_provider_id: Mapped[str | None] = mapped_column(
@@ -169,6 +172,5 @@ class ClaimTransaction(Base):
     claim: Mapped["Claim"] = relationship()
     patient: Mapped["Patient"] = relationship()
     appointment: Mapped["Encounter | None"] = relationship()
-    patient_insurance: Mapped["Payer | None"] = relationship(foreign_keys=[patientinsurance_id])
     provider: Mapped["Provider | None"] = relationship(foreign_keys=[provider_id])
     supervising_provider: Mapped["Provider | None"] = relationship(foreign_keys=[supervising_provider_id])
