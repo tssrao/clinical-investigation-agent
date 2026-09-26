@@ -13,6 +13,7 @@ class Settings(BaseSettings):
     database_url: str = "postgresql+psycopg2://cia:cia_dev_password@localhost:5432/cia"
     database_url_async: str = "postgresql+asyncpg://cia:cia_dev_password@localhost:5432/cia"
     openai_api_key: str = ""
+    openai_model: str = "gpt-4o-mini"
 
 
 settings = Settings()
