@@ -17,6 +17,7 @@ from app.db.models.clinical import (
     Supply,
 )
 from app.db.models.billing import Claim, ClaimTransaction, Payer, PayerTransition
+from app.db.models.lookups import LoincCode, RxNormCode
 
 __all__ = [
     "Patient",
@@ -37,4 +38,6 @@ __all__ = [
     "PayerTransition",
     "Claim",
     "ClaimTransaction",
+    "LoincCode",
+    "RxNormCode",
 ]
