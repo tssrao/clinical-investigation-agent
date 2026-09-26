@@ -4,14 +4,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project status
 
-Phase 0 in progress (data foundation). Repo layout is now `backend/` (Python app, `pyproject.toml`/`uv.lock` live here) + `notebooks/` (EDA, untouched by the restructure — still run from `notebooks/`, paths there are relative to that folder) + `frontend/` (reserved, empty until Phase 7) + root-level docs/`docker-compose.yml`. The 18-table Synthea schema exists as SQLAlchemy models (`backend/app/db/models/`) and an initial Alembic migration (`backend/alembic/versions/0001_initial_synthea_schema.py`), but nothing has been loaded into a real Postgres yet — no loader script, no lookup tables (RxNorm/ICD-10/LOINC), no app code beyond the schema. Before writing code, check the design doc's Phase table (Section 5) to see what phase is actually in progress — don't assume infrastructure (Redis, Celery, MLflow, etc.) is wired up just because it's listed in the tech stack.
+Phase 0 nearly complete (data foundation). Repo layout is `backend/` (Python app, `pyproject.toml`/`uv.lock` live here) + `notebooks/` (EDA, untouched by the restructure — still run from `notebooks/`, paths there are relative to that folder) + `frontend/` (reserved, empty until Phase 7) + `data/` (gitignored — `data/synthea/`, `data/lookup/{loinc,rxnorm}/`; see README) + root-level docs/`docker-compose.yml`. The 18-table Synthea schema is loaded into a real Postgres via `backend/scripts/load_csv_data.py` (verified: row counts match source CSVs exactly, zero duplicate PKs). LOINC lookup table is loaded (`backend/scripts/load_lookup_data.py`, resolves ~92% of `observations.CODE`). No ICD-10-CM table — verified it matches zero codes in this dataset (Synthea uses SNOMED-CT, out of scope per design doc §5) and was removed rather than kept unused. RxNorm pending UMLS license approval. No app code beyond the schema/loaders yet (Phase 1 not started). Before writing code, check the design doc's Phase table (Section 5) to see what phase is actually in progress — don't assume infrastructure (Redis, Celery, MLflow, etc.) is wired up just because it's listed in the tech stack.
 
 ## Essential reading before non-trivial work
 
 - **`clinical-investigation-agent-design.md`** — the full architecture, domain models, RBAC design, data findings, capability matrix, known limitations, and phase-by-phase build plan. Read this first; it is the source of truth for design decisions, not this file.
 - **`data_model.md`** — how the 18 Synthea CSV tables join together (key patterns, entity groups, ER diagram, join recipes). Read this before writing any query or loader touching Synthea data.
 - **`join_reference.md`** — join *safety*: verified cardinality/fan-out/dedup behavior for every join in `data_model.md` (e.g. `claims` isn't 1:1 with `encounters`, `REASONCODE` causal-chain joins over-match, joining two clinical tables directly on `ENCOUNTER` cross-products them). Read this before writing the SQL Tool's join logic or any NL→SQL prompt — it's the difference between correct and silently-duplicated query results.
-- **`README.md`** — quick orientation + how to regenerate `synthea_data/` (not committed; synthetic data regenerated on demand via the Synthea jar, unpinned seed).
+- **`README.md`** — quick orientation + how to regenerate `data/synthea/` and download the lookup vocabularies (none of `data/` is committed — regenerated/redownloaded on demand).
 
 ## Commands
 
@@ -38,12 +38,22 @@ uv run alembic revision --autogenerate -m "..."   # after changing a model in ap
 
 Connection settings come from `.env` at the repo root (copy `.env.example`) — `app/core/config.py` reads it, and `alembic/env.py` reads the same `Settings` object rather than `alembic.ini`'s placeholder URL. There is no build/run command for the application itself yet (Phase 1). **DB schema changes always go through Alembic migrations — never hand-edit the schema, never call `Base.metadata.create_all()` outside of migration 0001.**
 
-### Regenerating synthetic data
-
-`synthea_data/` is gitignored — generated fresh, not committed:
+### Loading data
 
 ```bash
-mkdir synthea_data && cd synthea_data
+cd backend
+uv run python scripts/load_csv_data.py      # Synthea CSVs -> 18 tables (data/synthea/output/csv/, must exist first)
+uv run python scripts/load_lookup_data.py   # LOINC (+ RxNorm once its file exists) -> lookup tables (data/lookup/)
+```
+
+Both truncate-and-reload inside a single transaction — safe to re-run any time source data changes. See README for how to obtain `data/synthea/` and `data/lookup/`.
+
+### Regenerating synthetic data
+
+`data/` is gitignored — generated/downloaded fresh, not committed:
+
+```bash
+mkdir -p data/synthea && cd data/synthea
 curl -sL -o synthea-with-dependencies.jar https://github.com/synthetichealth/synthea/releases/download/master-branch-latest/synthea-with-dependencies.jar
 java -Xmx4g -jar synthea-with-dependencies.jar --exporter.csv.export=true --exporter.baseDirectory=./output -p 2000 Massachusetts
 ```
@@ -63,7 +73,7 @@ No pinned seed — patient records differ between runs by design; the agent is m
 
 **Routing discipline matters**: the Planner should scope tools to the question (fast path: SQL-only or lookup-only for trivial questions) rather than always running the full pipeline. Over-invoking tools on simple questions is treated as a design defect, not a minor inefficiency — see design doc §3.6.
 
-**Data source of truth is Synthea's schema, unmodified** — `Patient` is read directly from it, not duplicated into the application's own tables. RxNorm, ICD-10, and LOINC are lookup tables; PubMed abstracts live in pgvector for the Literature Tool.
+**Data source of truth is Synthea's schema, unmodified** — `Patient` is read directly from it, not duplicated into the application's own tables. LOINC and RxNorm are lookup tables (no ICD-10-CM — see Project status above); PubMed abstracts live in pgvector for the Literature Tool.
 
 ## Known dataset constraints (drive design decisions — don't design around data that isn't there)
 
@@ -71,5 +81,7 @@ No pinned seed — patient records differ between runs by design; the agent is m
 - No claim denial/rejection state — `claims.STATUS*` is always `BILLED`/`CLOSED`. Claim questions must be framed as billing-lifecycle explanations, not denial reasoning.
 - No drug-drug interaction data — RxNorm is a vocabulary, not an interactions DB. A hand-curated ~20-30 pattern interaction table is planned (Phase 3), not sourced externally.
 - `medications.REASONCODE` links a med to the condition it treats on ~81% of rows (verified at the 2,338-patient dev scale) — this is the real causal-chain data backing the anchor "why did X change" scenarios; prefer it over LLM inference.
+- `conditions.CODE` and `claims.DIAGNOSISn` are SNOMED-CT, not ICD-10-CM — verified against real loaded data (0 matches against a loaded ICD-10 table). Don't expect an ICD-10 lookup to resolve these; there isn't one in this schema (see above).
+- `claims_transactions.PATIENTINSURANCEID` is **not** a `payers.Id` reference despite the name — it's `payer_transitions.MEMBERID` (a specific membership/plan instance). No FK on this column; see `app/db/models/billing.py` docstring.
 
 See design doc §4.3.2 and §4.5 for the full findings list and rationale — don't rediscover these by re-exploring the CSVs.

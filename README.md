@@ -79,19 +79,29 @@ Full architecture, domain models, RBAC design, data sourcing decisions, capabili
 
 ## Project status
 
-Pre-implementation — data foundation in progress. See the design doc's build plan (Phase 0 onward: core Planner→Tool→Reviewer→Report loop first, infra layered on after) for what's built vs. planned.
+Phase 0 (data foundation) nearly complete: 18-table Synthea schema loaded into Postgres, LOINC lookup table loaded. RxNorm pending a UMLS license approval. See the design doc's build plan (Phase 0 onward: core Planner→Tool→Reviewer→Report loop first, infra layered on after) for what's built vs. planned.
 
 ## Getting started
 
 ### Requirements
 - Recent JDK to run the Synthea generator (tested with `java version "25.0.4" 2026-07-21 LTS`)
 
+### Data folder layout
+
+All generated/downloaded data lives under `data/` at the repo root, gitignored (regenerated/redownloaded on demand, never committed):
+
+```
+data/
+  synthea/       # Synthea jar + generated CSV/FHIR output (see below)
+  lookup/
+    loinc/       # LoincTableCore.csv
+    rxnorm/      # RXNCONSO.RRF (once UMLS access is approved)
+```
+
 ### Generate synthetic patient data
 
-The `synthea_data/` folder (generated CSV/FHIR output + the Synthea jar) is **not** committed to this repo — it's synthetic data regenerated on demand, and the jar is a third-party build artifact, not project code.
-
 ```bash
-mkdir synthea_data && cd synthea_data
+mkdir -p data/synthea && cd data/synthea
 curl -sL -o synthea-with-dependencies.jar https://github.com/synthetichealth/synthea/releases/download/master-branch-latest/synthea-with-dependencies.jar
 java -Xmx4g -jar synthea-with-dependencies.jar --exporter.csv.export=true --exporter.baseDirectory=./output -p 2000 Massachusetts
 ```
@@ -99,3 +109,33 @@ java -Xmx4g -jar synthea-with-dependencies.jar --exporter.csv.export=true --expo
 `-p 2000` targets 2,000 *living* patients — Synthea additionally exports everyone who died during their simulated lifetime, so the actual `patients.csv` row count comes out higher (2,338 in the current dev dataset). `-Xmx4g` raises the JVM heap; bump it further if generating a larger population (up to the 5,000 recommended ceiling — see the design doc §7) causes an out-of-memory error.
 
 This pulls the latest `master-branch-latest` Synthea build without a pinned seed, so patient records will differ slightly between runs. That's expected: the agent answers questions against whatever patient data is currently loaded, not a fixed benchmark set.
+
+### Load Synthea data into Postgres
+
+Bring up Postgres (`docker compose up -d postgres` from repo root) and run migrations (`cd backend && uv run alembic upgrade head`), then:
+
+```bash
+cd backend
+uv run python scripts/load_csv_data.py
+```
+
+Truncates and reloads all 18 tables from `data/synthea/output/csv/`, in FK-dependency order, inside a single transaction. Safe to re-run any time you regenerate `data/synthea/`.
+
+### Lookup vocabularies (LOINC, RxNorm)
+
+No ICD-10-CM table: verified against real loaded data that Synthea uses SNOMED-CT, not ICD-10-CM, for both `conditions.CODE` and `claims.DIAGNOSISn` (0 matches out of hundreds of distinct codes checked) — SNOMED-CT is explicitly out of scope for this project (design doc §5), so an ICD-10 lookup table has nothing to resolve here and was dropped rather than kept as dead weight. LOINC, by contrast, resolves ~92% of `observations.CODE` values directly, and is genuinely load-bearing.
+
+**LOINC**:
+1. Create a free account at [loinc.org](https://loinc.org), download the latest full release zip.
+2. Unzip; from inside it, place `LoincTableCore/LoincTableCore.csv` at `data/lookup/loinc/LoincTableCore.csv` (this is the stable core-columns subset — not the full `Loinc.csv`, which carries ~300+ columns of metadata not needed here).
+
+**RxNorm** (requires a free UMLS Metathesaurus account at [uts.nlm.nih.gov](https://uts.nlm.nih.gov) — approval isn't always instant):
+1. Once approved, download the current monthly RxNorm full release from the UMLS Technology Services site.
+2. Unzip; place `rrf/RXNCONSO.RRF` at `data/lookup/rxnorm/RXNCONSO.RRF`.
+
+Then load whatever's present (RxNorm is skipped with a message if its file isn't there yet):
+
+```bash
+cd backend
+uv run python scripts/load_lookup_data.py
+```

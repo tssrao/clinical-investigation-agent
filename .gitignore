@@ -3,8 +3,9 @@
 .env
 *.env.local
 
-# synthea (generated data + jar, not tracked — see README for regeneration steps)
-synthea_data/
+# data (synthea = generated + jar, lookup = licensed third-party vocabularies —
+# neither is tracked; see README for regeneration/download steps)
+data/
 
 # python
 .venv/

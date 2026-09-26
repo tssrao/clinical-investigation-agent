@@ -190,7 +190,7 @@ A planner that over-invokes tools on simple questions shows worse judgment than 
 |---|---|---|
 | Trivial fact lookup | "What is the patient's blood type?" | SQL only |
 | Simple structured list | "List all current medications" | SQL + Medication |
-| Terminology lookup | "What does ICD-10 code E11.9 mean?" | ICD/LOINC lookup only |
+| Terminology lookup | "What does LOINC code 2160-0 mean?" | LOINC lookup only |
 | Full investigation | "Why did creatinine double?" | Full pipeline: SQL → Timeline → Medication → Literature → Reviewer → Report |
 
 This shows the Planner reasoning about *scope* rather than executing a fixed chain regardless of question complexity.
@@ -298,8 +298,13 @@ MLflow is used for more than serving one model:
 | **Synthea** | The single operational database — all patient-centric data, including claims (`claims`, `claims_transactions`, `payers`, `payer_transitions`), so both the Doctor and Insurance Adjuster roles query the same patient-identity space through different policy-scoped lenses | Relational (PostgreSQL) |
 | **RxNorm** | Drug name normalization, drug class metadata | Lookup table |
 | **PubMed (open-access abstracts)** | Literature evidence, grounding for "why" questions | Vector (pgvector) |
-| **ICD-10** | Diagnosis code → human-readable description | Lookup table |
 | **LOINC** | Lab code → human-readable description | Lookup table |
+
+No ICD-10 lookup table: verified against real loaded data that Synthea emits SNOMED-CT (not ICD-10-CM)
+for both `conditions.CODE` and `claims.DIAGNOSISn` — 0 matches out of hundreds of distinct codes
+checked against a loaded ICD-10-CM table (see §4.3.2). SNOMED-CT is itself explicitly out of scope
+(§5, "Explicitly deferred, not planned"), so diagnosis-code terminology lookup isn't a supported
+capability in this dataset — see the Known Limitations table below.
 
 #### 4.3.2 Findings from the generated data
 
@@ -313,6 +318,8 @@ The following findings come from inspecting a real Synthea CSV export (2,338-pat
 | **No claim denial/rejection field exists** | Every value of `claims.STATUS1/STATUS2/STATUSP` across 255,653 claims is either `BILLED` or `CLOSED` — no `DENIED` state anywhere | "Why was this claim rejected?" is not answerable with this data. Reframed to: "explain how this claim's charges were generated and covered" / "summarize this claim's billing lifecycle" |
 | **No free text anywhere in the dataset** | Every `observations.TYPE == "text"` row (673,337 of them) is a structured survey field (address, employment, education, PRAPARE/PhenX social-determinants screening) — not narrative clinical notes | No "summarize the physician's note" question is possible, at any patient count. This is a structural property of Synthea, not a sampling issue |
 | **Claims and claims_transactions are real, joinable tables** | Patient → claim → line-item charges with procedure/diagnosis codes, amounts, payer coverage | Billing summary and cost-analysis questions are fully supported |
+| **Diagnosis codes are SNOMED-CT, not ICD-10-CM** | `conditions.CODE` and `claims.DIAGNOSISn` (0/285 and 0/221 distinct codes respectively matched a loaded ICD-10-CM lookup table) | No ICD-10 lookup table built (removed after this finding — see §4.3.1); diagnosis-code terminology lookup isn't a supported capability, since SNOMED-CT is out of scope |
+| **`claims_transactions.PATIENTINSURANCEID` is not a `payers.Id` reference** | Despite the name, it's `payer_transitions.MEMBERID` (a specific membership/plan instance) — confirmed every `MEMBERID` maps to exactly one payer across 52,641 distinct membership ids | Original schema had this as `ForeignKey("payers.Id")`, which caused real load failures; fixed via migration. Resolve through `payer_transitions.MEMBERID` first, not directly to `payers` — see `join_reference.md` §8 |
 
 #### 4.3.3 The one remaining data gap: drug interactions
 
@@ -332,9 +339,9 @@ Each row is a distinct real-world workflow the system supports, rather than a li
 | Readmission risk assessment | Prediction Tool (MLflow) | Doctor |
 | Comparative admission analysis | SQL + Timeline + Visualization | Doctor |
 | Claim charge/billing lifecycle explanation | Synthea claims + claims_transactions | Insurance Adjuster |
-| Claim-vs-documentation consistency check | Claims + procedures + ICD lookup + Reviewer | Insurance Adjuster |
+| Claim-vs-documentation consistency check | Claims + procedures + Reviewer | Insurance Adjuster |
 | Cost trend analysis | SQL + Visualization Tool | Insurance Adjuster |
-| Terminology lookup (fast path, no planner) | ICD-10 / LOINC lookup only | Both |
+| Terminology lookup (fast path, no planner) | LOINC lookup only | Both |
 | Simple factual lookup (fast path) | SQL only | Both |
 | Secure, scoped data access | JWT + RBAC + Policy Layer | Both |
 | Resumable case investigation | PostgreSQL long-term memory | Both |
@@ -349,6 +356,7 @@ These are deliberate scope boundaries driven by what the dataset actually contai
 | No claim denial reasoning | Synthea claims model doesn't include adjudication outcomes | Reframe to billing-lifecycle / charge-generation questions |
 | No real drug-drug interaction data | RxNorm is a vocabulary, not an interactions database | Curate a small interaction rules table (~20–30 patterns) — Phase 3 |
 | No imaging data (only metadata) | Synthea `imaging_studies` table has study metadata, not actual images | No radiology-interpretation questions |
+| No diagnosis-code terminology lookup | `conditions.CODE`/`claims.DIAGNOSISn` are SNOMED-CT, not ICD-10-CM (verified); SNOMED is itself out of scope | Reframe diagnosis questions around `DESCRIPTION` text already stored on the row, not a code lookup |
 | Predictions show the ML pipeline working, not real clinical validity | Model is trained on synthetic data | State this explicitly in the README — the readmission model demonstrates the pipeline (MLflow tracking, serving, Planner-invoked usage), not a clinically validated tool |
 | Rare/unusual disease presentations underrepresented | Synthea disease progression is module-driven | Stick to common, well-modeled conditions for example patients: diabetes, hypertension, CKD, sepsis |
 | Not Clinical Decision Support | Deliberate scope boundary, not a technical limitation | The system investigates and presents evidence; it never recommends treatment or asserts a diagnosis is correct |
@@ -361,7 +369,7 @@ Sequenced so each phase is a working, testable slice before the next begins — 
 
 | Phase | Focus | Exit criteria |
 |---|---|---|
-| **0** | **Data foundation** — Synthea CSV → Postgres schema (managed with Alembic from the first migration) + loader script; RxNorm/ICD-10/LOINC lookup tables sourced and loaded | Full Synthea export queryable in Postgres; lookup tables populated; schema changes go through Alembic migrations |
+| **0** | **Data foundation** — Synthea CSV → Postgres schema (managed with Alembic from the first migration) + loader script; RxNorm/LOINC lookup tables sourced and loaded (no ICD-10-CM — removed after verifying it matches zero codes in this dataset, see §4.3.1/§4.3.2) | Full Synthea export queryable in Postgres (done); LOINC loaded, RxNorm pending UMLS license approval; schema changes go through Alembic migrations (done) |
 | **1** | **Core loop, one tool, no agents** — hardcoded pipeline: question → SQL Tool (NL→SQL, execute, return rows) → trivial Report. Synchronous, in-process. pytest suite started here and extended in every subsequent phase | SQL Tool reliably answers simple factual questions against the real 18-table schema, with auto-repair on failed SQL, covered by tests |
 | **2** | **Planner + Reviewer + Investigation Plan object** — real agent loop: Planner emits task-list JSON, Reviewer checks sufficiency, feedback loop can insert tasks, capped at 2 extra rounds (Section 3.3) | End-to-end investigation on the anchor scenario question runs synchronously and produces a Report with traceable Artifacts |
 | **3** | **Expand tools, one at a time** — Timeline → Medication (RxNorm) → Prediction (train + MLflow-track + serve a readmission model) → Literature (pgvector + PubMed embeddings) → Visualization → drug interaction rules table (~20–30 patterns, Section 4.3.3) | Each tool independently provable against the capability matrix (Section 4.4) before the next is started |

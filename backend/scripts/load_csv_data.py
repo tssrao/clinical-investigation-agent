@@ -14,7 +14,7 @@ Design (see CLAUDE.md / join_reference.md for the underlying data facts):
 - Loading uses COPY via psycopg2.copy_expert (not row-by-row INSERT), which is the only
   approach that's fast enough for claims_transactions (~2.2M rows).
 - Tables are truncated (in reverse dependency order) and reloaded inside a single transaction,
-  so re-running this script after regenerating synthea_data/ is always safe.
+  so re-running this script after regenerating data/synthea/ is always safe.
 """
 
 import io
@@ -42,7 +42,7 @@ from app.db.models.clinical import (
 from app.db.models.core import Encounter, Organization, Patient, Provider
 from app.db.session import engine
 
-SYNTHEA_DATA_PATH = Path(__file__).resolve().parents[2] / "synthea_data" / "output" / "csv"
+SYNTHEA_DATA_PATH = Path(__file__).resolve().parents[2] / "data" / "synthea" / "output" / "csv"
 
 # (csv filename, model class) in FK-dependency order: every table only depends on
 # tables that already appear earlier in this list.
