@@ -17,6 +17,7 @@ from datetime import date, datetime
 from sqlalchemy import text
 
 from app.db.session import engine
+from app.rbac.policy import scoped_connection
 
 # (date column, extra columns to describe the event, category, description builder)
 _QUERIES: list[tuple[str, str, str]] = [
@@ -116,15 +117,24 @@ def _describe(category: str, row: dict) -> str:
 
 
 def build_timeline(
-    patient_id: str, start_date: str | None = None, end_date: str | None = None
+    patient_id: str,
+    start_date: str | None = None,
+    end_date: str | None = None,
+    role: str | None = None,
 ) -> TimelineResult:
     """start_date/end_date, if given, are ISO date strings that bound the window
     (inclusive) - useful once a question implies a specific period; omitted, the
     full patient history is returned.
+
+    role, if given (Phase 4 RBAC), runs every query through the same DB-level
+    permission/RLS boundary as the SQL Tool (app.rbac.policy.scoped_connection)
+    rather than trusting that only doctor-role investigations ever call this
+    tool - defense in depth, not reliant on the Planner alone.
     """
     events: list[TimelineEvent] = []
 
-    with engine.connect() as conn:
+    connection_cm = scoped_connection(role, [patient_id]) if role else engine.connect()
+    with connection_cm as conn:
         for category, _, query in _QUERIES:
             rows = conn.execute(text(query), {"patient_id": patient_id}).mappings().all()
             for row in rows:

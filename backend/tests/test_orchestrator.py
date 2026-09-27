@@ -45,12 +45,25 @@ class TestSummarizeArtifacts:
     def test_sql_result_summary_includes_sql_and_row_count(self):
         artifact = Artifact(
             id="a1", investigation_id="i1", task_id="t1", type="sql_result",
-            content={"sql": "SELECT 1", "row_count": 1, "rows": [{"n": 1}]},
+            content={"sql": "SELECT 1", "row_count": 1, "rows": [{"n": 1}], "success": True},
             source="SELECT 1", created_at=datetime.now(timezone.utc),
         )
         summary = _summarize_artifacts([artifact])
         assert "SELECT 1" in summary
         assert "1 row(s)" in summary
+
+    def test_failed_sql_result_is_flagged_not_reported_as_empty(self):
+        """Regression test (Phase 4): a failed/denied query must never be
+        summarized the same way as a genuinely empty successful result.
+        """
+        artifact = Artifact(
+            id="a1", investigation_id="i1", task_id="t1", type="sql_result",
+            content={"sql": "SELECT * FROM medications", "success": False, "error": "permission denied"},
+            source=None, created_at=datetime.now(timezone.utc),
+        )
+        summary = _summarize_artifacts([artifact])
+        assert "QUERY FAILED" in summary
+        assert "permission denied" in summary
 
 
 @requires_openai_key

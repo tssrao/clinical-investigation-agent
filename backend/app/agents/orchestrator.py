@@ -25,6 +25,7 @@ from app.agents.schemas import TaskSpec
 from app.core.config import settings
 from app.db.models.investigation import Artifact, Investigation, Report, Task
 from app.db.session import SessionLocal
+from app.rbac.policy import TOOLS_FOR_ROLE
 from app.tools.interaction_tool import check_drug_interactions
 from app.tools.prediction_tool import predict_readmission_risk
 from app.tools.sql_tool import run_sql_tool
@@ -32,6 +33,19 @@ from app.tools.timeline_tool import build_timeline
 from app.tools.visualization_tool import build_chart_for_patient
 
 MAX_REVIEW_ROUNDS = 2
+
+# Used only when a tool raises instead of returning normally (e.g. a DB-level
+# RBAC denial, or MLflow being transiently unreachable) - the Artifact still
+# needs the RIGHT type so report-assembly's per-type lookups (prediction_
+# artifact, timeline_artifact, etc.) actually find it instead of silently
+# treating that section as never having run.
+ARTIFACT_TYPE_FOR_TOOL = {
+    "sql": "sql_result",
+    "timeline": "timeline",
+    "prediction": "prediction",
+    "drug_interactions": "drug_interaction",
+    "visualization": "visualization",
+}
 
 
 def _json_safe(value):
@@ -53,13 +67,19 @@ def _json_safe(value):
     return value
 
 
-def _execute_task(tool: str, purpose: str, patient_id: str | None) -> tuple[dict, str | None, str, bool]:
-    """Returns (content, source, artifact_type, success). Only 'sql' is real
-    right now (Phase 1) - see planner.AVAILABLE_TOOLS.
+def _execute_task(
+    tool: str, purpose: str, patient_id: str | None, role: str | None = None
+) -> tuple[dict, str | None, str, bool]:
+    """Returns (content, source, artifact_type, success). role, when given
+    (Phase 4 RBAC), is threaded into every tool that touches Postgres so the
+    same DB-level permission/RLS boundary applies regardless of which tool the
+    Planner routed to - see app.rbac.policy.
     """
+    patient_scope = [patient_id] if patient_id else []
+
     if tool == "sql":
         question = purpose + (f" (for patient id: {patient_id})" if patient_id else "")
-        result = run_sql_tool(question)
+        result = run_sql_tool(question, role=role, patient_scope=patient_scope)
         content = _json_safe({
             "question": result.question,
             "sql": result.sql,
@@ -73,7 +93,7 @@ def _execute_task(tool: str, purpose: str, patient_id: str | None) -> tuple[dict
     if tool == "timeline":
         if not patient_id:
             return {"error": "timeline requires a patient_id"}, None, "timeline", False
-        result = build_timeline(patient_id)
+        result = build_timeline(patient_id, role=role)
         content = _json_safe({
             "patient_id": result.patient_id,
             "event_count": result.event_count,
@@ -138,12 +158,34 @@ def _summarize_artifacts(artifacts: list[Artifact]) -> str:
     lines = []
     for a in artifacts:
         content = a.content
-        if a.type == "sql_result":
-            sample = content.get("rows", [])[:3]
+        if content.get("success") is False and "error" in content and "sql" not in content:
+            # A tool raised instead of returning normally (e.g. a DB-level RBAC
+            # denial, or MLflow being transiently unreachable) - this applies
+            # across every tool type, not just sql_result, and must be as
+            # clearly flagged as a failure as the sql_result branch below.
             lines.append(
-                f"- [{a.type}] SQL: {content.get('sql')} | "
-                f"{content.get('row_count')} row(s) | sample: {sample}"
+                f"- [{a.type}] TASK FAILED (not evidence of an empty/negative "
+                f"result - this is an execution/authorization failure): "
+                f"error: {content.get('error')}"
             )
+        elif a.type == "sql_result":
+            if not content.get("success"):
+                # Critical: a failed/denied query must never be summarized the
+                # same way as a genuinely empty result - a permission-denied
+                # RBAC failure is not evidence of "no data," and reporting it
+                # as one would be a false negative finding, not a traceable
+                # claim (design doc 3.5's whole point).
+                lines.append(
+                    f"- [{a.type}] QUERY FAILED (not evidence of an empty result - this "
+                    f"is an execution/authorization failure): SQL: {content.get('sql')} | "
+                    f"error: {content.get('error')}"
+                )
+            else:
+                sample = content.get("rows", [])[:3]
+                lines.append(
+                    f"- [{a.type}] SQL: {content.get('sql')} | "
+                    f"{content.get('row_count')} row(s) | sample: {sample}"
+                )
         elif a.type == "timeline":
             events = content.get("events", [])
             first_last = f"{events[0]['event_date']} .. {events[-1]['event_date']}" if events else "n/a"
@@ -194,7 +236,18 @@ def _generate_executive_summary(question: str, goal: str, artifacts_summary: str
                     "Write a 2-4 sentence plain-language executive summary answering "
                     "the investigation's original question, grounded ONLY in the "
                     "evidence given - do not state anything the evidence doesn't "
-                    "support. No markdown, no bullet points, plain prose."
+                    "support. No markdown, no bullet points, plain prose.\n\n"
+                    "CRITICAL: some evidence entries are marked QUERY FAILED or TASK "
+                    "FAILED (an execution or authorization failure, e.g. access was "
+                    "restricted by the requester's role) - this is NOT the same as a "
+                    "tool that ran successfully and found nothing. NEVER report a "
+                    "QUERY FAILED or TASK FAILED entry as 'no data exists', 'the "
+                    "patient has none', or similar - a failed or denied task means "
+                    "the evidence is simply unavailable to this "
+                    "investigation, not that the answer is negative. State plainly "
+                    "that this information could not be retrieved (and why, if an "
+                    "authorization restriction is evident), rather than implying an "
+                    "absence."
                 ),
             },
             {
@@ -223,10 +276,29 @@ def _run_tasks(
         session.flush()  # assign task.id before the Artifact FK references it
 
         try:
-            content, source, artifact_type, success = _execute_task(spec.tool, spec.purpose, investigation.patient_id)
+            content, source, artifact_type, success = _execute_task(
+                spec.tool, spec.purpose, investigation.patient_id, role=investigation.role
+            )
         except NotImplementedError as e:
             task.status = "skipped"
             content, source, artifact_type, success = {"error": str(e)}, None, "sql_result", False
+        except Exception as e:
+            # A tool that exists can still fail at execution time - most
+            # importantly a DB-level RBAC denial (Section 2.2): the Planner is
+            # told a role-scoped tool list, but that's a prompt instruction,
+            # not a guarantee (confirmed directly: the Planner planned a
+            # timeline task for an insurance_adjuster investigation despite
+            # being told not to). The real enforcement is the DB permission/RLS
+            # boundary underneath, which raises here rather than silently
+            # filtering - must fail this one task gracefully, not crash the
+            # whole investigation.
+            task.status = "failed"
+            content, source, artifact_type, success = (
+                {"error": f"{type(e).__name__}: {e}", "success": False},
+                None,
+                ARTIFACT_TYPE_FOR_TOOL.get(spec.tool, "sql_result"),
+                False
+            )
 
         if content is not None:
             artifact = Artifact(
@@ -248,6 +320,9 @@ def _run_tasks(
 
 
 def run_investigation(question: str, patient_id: str | None = None, role: str | None = None) -> Investigation:
+    if role is not None and role not in TOOLS_FOR_ROLE:
+        raise ValueError(f"unknown role: {role!r}, must be one of {list(TOOLS_FOR_ROLE)} or None")
+
     session = SessionLocal()
     try:
         investigation = Investigation(
@@ -267,7 +342,7 @@ def run_investigation(question: str, patient_id: str | None = None, role: str | 
 
         evidence_complete = True
         for round_num in range(1, MAX_REVIEW_ROUNDS + 1):
-            decision = review_evidence(plan.goal, _summarize_artifacts(all_artifacts))
+            decision = review_evidence(plan.goal, _summarize_artifacts(all_artifacts), role=investigation.role)
             if decision.sufficient:
                 evidence_complete = True
                 break
@@ -282,7 +357,7 @@ def run_investigation(question: str, patient_id: str | None = None, role: str | 
             evidence_complete = False  # only true again if a later review says sufficient
         else:
             # cap hit (loop completed without an early sufficient=True break)
-            final_decision = review_evidence(plan.goal, _summarize_artifacts(all_artifacts))
+            final_decision = review_evidence(plan.goal, _summarize_artifacts(all_artifacts), role=investigation.role)
             evidence_complete = final_decision.sufficient
 
         executive_summary = _generate_executive_summary(
@@ -318,7 +393,12 @@ def run_investigation(question: str, patient_id: str | None = None, role: str | 
         session.commit()
 
         session.refresh(investigation)
-        _ = investigation.tasks, investigation.artifacts, investigation.report  # load before session closes
+        # load before session closes - task.artifact is its own lazy relationship,
+        # not implied by touching investigation.artifacts (found via a test that
+        # accessed it on a failed task after the session had already closed)
+        _ = investigation.tasks, investigation.artifacts, investigation.report
+        for task in investigation.tasks:
+            _ = task.artifact
         return investigation
     except Exception:
         session.rollback()

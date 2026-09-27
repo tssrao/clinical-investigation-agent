@@ -14,6 +14,8 @@ class Settings(BaseSettings):
     database_url_async: str = "postgresql+asyncpg://cia:cia_dev_password@localhost:5432/cia"
     openai_api_key: str = ""
     openai_model: str = "gpt-4o-mini"
+    jwt_secret_key: str = "dev-only-insecure-secret-change-before-any-real-deployment"
+    jwt_algorithm: str = "HS256"
 
 
 settings = Settings()
