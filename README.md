@@ -157,3 +157,14 @@ Train and register the readmission model (safe to re-run — registers a new ver
 cd backend
 uv run python scripts/train_readmission_model.py
 ```
+
+### Literature corpus (Literature Tool)
+
+A small, deliberately narrow PubMed abstract corpus (~35 abstracts across 7 topics tied to the anchor scenario — see `app/db/models/literature.py`), embedded via OpenAI and stored in pgvector:
+
+```bash
+cd backend
+uv run python scripts/ingest_literature.py
+```
+
+Safe to re-run (upserts by PMID). Uses PubMed's public E-utilities API — no key required at this volume, but the search endpoint is occasionally down on NCBI's end (confirmed via `einfo` still working while `esearch` returns a backend error); the script retries with backoff, but if it still fails, it's an NCBI outage, not a bug — just try again later.
