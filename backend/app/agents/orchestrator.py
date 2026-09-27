@@ -1,6 +1,10 @@
 """Phase 2 orchestrator: runs the real Planner -> execute -> Reviewer loop (design
-doc 3.1/3.3) synchronously (async/Celery wrapping is Phase 6) and persists the
-Investigation/Task/Artifact/Report domain model (3.4) as it goes.
+doc 3.1/3.3) and persists the Investigation/Task/Artifact/Report domain model
+(3.4) as it goes. Stays synchronous and directly callable (every phase's tests
+call run_investigation() as a plain function) - Phase 6's Celery task
+(app/worker/tasks.py) wraps this unchanged rather than rewriting it, and
+publish_event calls below are best-effort (never raise) so this still works
+identically with no worker/Redis running at all.
 
 Loop shape, exactly per 3.3: Planner emits the initial plan as its one action (no
 implicit tool-call looping) -> orchestrator executes each task deterministically,
@@ -12,6 +16,7 @@ still insufficient (never loops indefinitely).
 """
 
 import json
+import uuid
 from dataclasses import asdict, is_dataclass
 from datetime import date, datetime, timezone
 from decimal import Decimal
@@ -31,6 +36,7 @@ from app.tools.prediction_tool import predict_readmission_risk
 from app.tools.sql_tool import run_sql_tool
 from app.tools.timeline_tool import build_timeline
 from app.tools.visualization_tool import build_chart_for_patient
+from app.worker.progress import publish_event
 
 MAX_REVIEW_ROUNDS = 2
 
@@ -274,6 +280,7 @@ def _run_tasks(
         )
         session.add(task)
         session.flush()  # assign task.id before the Artifact FK references it
+        publish_event(investigation.id, "task_started", task_id=task.id, tool=spec.tool, purpose=spec.purpose)
 
         try:
             content, source, artifact_type, success = _execute_task(
@@ -315,17 +322,29 @@ def _run_tasks(
         if task.status != "skipped":
             task.status = "complete" if success else "failed"
 
+        publish_event(investigation.id, "task_finished", task_id=task.id, tool=spec.tool, status=task.status)
+
     session.flush()
     return new_artifacts
 
 
-def run_investigation(question: str, patient_id: str | None = None, role: str | None = None) -> Investigation:
+def run_investigation(
+    question: str, patient_id: str | None = None, role: str | None = None, investigation_id: str | None = None
+) -> Investigation:
+    """investigation_id: normally left to auto-generate, but the Phase 6 API
+    (app/api/main.py) pre-assigns one before submitting to Celery, so it can
+    return the id to the client immediately - otherwise the id doesn't exist
+    until this function actually starts running inside the worker, and the
+    client would have nothing to subscribe a progress WebSocket to yet.
+    """
     if role is not None and role not in TOOLS_FOR_ROLE:
         raise ValueError(f"unknown role: {role!r}, must be one of {list(TOOLS_FOR_ROLE)} or None")
 
     session = SessionLocal()
+    investigation = None
     try:
         investigation = Investigation(
+            id=investigation_id or str(uuid.uuid4()),
             patient_id=patient_id,
             role=role,
             question=question,
@@ -334,9 +353,14 @@ def run_investigation(question: str, patient_id: str | None = None, role: str | 
         )
         session.add(investigation)
         session.flush()
+        publish_event(investigation.id, "investigation_started", question=question)
 
         plan = generate_plan(question, patient_id=patient_id, role=role)
         investigation.goal = plan.goal
+        publish_event(
+            investigation.id, "plan_ready", goal=plan.goal,
+            tasks=[{"tool": t.tool, "purpose": t.purpose} for t in plan.tasks],
+        )
 
         all_artifacts = _run_tasks(session, investigation, plan.tasks, round_num=0)
 
@@ -391,6 +415,10 @@ def run_investigation(question: str, patient_id: str | None = None, role: str | 
         investigation.status = "complete"
         investigation.evidence_complete = evidence_complete
         session.commit()
+        publish_event(
+            investigation.id, "investigation_complete",
+            evidence_complete=evidence_complete, executive_summary=executive_summary,
+        )
 
         session.refresh(investigation)
         # load before session closes - task.artifact is its own lazy relationship,
@@ -400,8 +428,10 @@ def run_investigation(question: str, patient_id: str | None = None, role: str | 
         for task in investigation.tasks:
             _ = task.artifact
         return investigation
-    except Exception:
+    except Exception as e:
         session.rollback()
+        if investigation is not None and investigation.id is not None:
+            publish_event(investigation.id, "investigation_failed", error=f"{type(e).__name__}: {e}")
         raise
     finally:
         session.close()

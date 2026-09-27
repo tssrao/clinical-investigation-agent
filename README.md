@@ -177,3 +177,37 @@ uv run python scripts/seed_drug_interactions.py
 ```
 
 Safe to re-run (upserts by PMID). Uses PubMed's public E-utilities API — no key required at this volume, but the search endpoint is occasionally down on NCBI's end (confirmed via `einfo` still working while `esearch` returns a backend error); the script retries with backoff, but if it still fails, it's an NCBI outage, not a bug — just try again later.
+
+### Async infra: Redis, Celery worker, API server (Phase 6)
+
+Investigations run as background jobs with live progress streamed over a WebSocket (design doc §3.9), instead of blocking a request thread for the full investigation duration.
+
+Redis (Celery broker/backend + progress pub/sub) is a real docker-compose service:
+
+```bash
+docker compose up -d redis   # from repo root
+```
+
+The Celery worker and the API server are both local processes for now (same interim pattern as MLflow — not yet docker-compose services), each in its own terminal:
+
+```bash
+cd backend
+uv run celery -A app.worker.celery_app worker --loglevel=info --pool=solo   # --pool=solo is required on Windows (no fork())
+```
+
+```bash
+cd backend
+uv run uvicorn app.api.main:app --host 127.0.0.1 --port 8000
+```
+
+With all three running:
+
+```bash
+curl -X POST http://127.0.0.1:8000/investigations -H "Content-Type: application/json" -d "{\"question\": \"How many patients are there in total?\"}"
+# -> {"investigation_id": "...", "task_id": "...", "status": "submitted"}
+
+curl http://127.0.0.1:8000/investigations/<investigation_id>
+# -> the full Investigation once complete (may briefly 404 right after submission - normal for an async job)
+```
+
+Live progress: connect a WebSocket client to `ws://127.0.0.1:8000/ws/investigations/<investigation_id>` — streams `investigation_started` → `plan_ready` → `task_started`/`task_finished` (once per task) → `investigation_complete`, then closes.

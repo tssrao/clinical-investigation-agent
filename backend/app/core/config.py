@@ -16,6 +16,7 @@ class Settings(BaseSettings):
     openai_model: str = "gpt-4o-mini"
     jwt_secret_key: str = "dev-only-insecure-secret-change-before-any-real-deployment"
     jwt_algorithm: str = "HS256"
+    redis_url: str = "redis://localhost:6379/0"
 
 
 settings = Settings()
