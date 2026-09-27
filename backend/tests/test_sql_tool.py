@@ -51,6 +51,21 @@ class TestExecuteSql:
         assert rows == []
         assert error is not None
 
+    def test_slow_query_is_cancelled_not_left_to_hang(self):
+        """Regression test for a real incident: an LLM-generated self-join
+        query with a correlated subquery and no LIMIT ran for 18+ minutes
+        against real data volume before being manually killed in Postgres.
+        Nothing bounded query duration before this - statement_timeout
+        (app/rbac/policy.py) must cancel a runaway query, not let it hang.
+        """
+        import time
+        start = time.time()
+        rows, error = execute_sql("SELECT pg_sleep(30)")
+        elapsed = time.time() - start
+        assert elapsed < 20  # cancelled well before the full 30s sleep completes
+        assert rows == []
+        assert error is not None and "timeout" in error.lower()
+
 
 class TestFormatReport:
     def test_failed_result(self):
