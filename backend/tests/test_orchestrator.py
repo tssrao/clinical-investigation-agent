@@ -104,6 +104,18 @@ class TestRunInvestigationIntegration:
         # round is never allowed past the hard cap (design doc 3.3: 2 extra rounds)
         assert all(t.round <= 2 for t in inv.tasks)
 
+    def test_readmission_question_plans_a_prediction_task_and_populates_report(self):
+        inv = run_investigation(
+            "What is this patient's risk of being readmitted to the hospital within 30 days?",
+            patient_id="02459150-c160-03b6-f1dd-dae8fd4b3e84",  # verified: has an inpatient encounter
+        )
+        assert inv.status == "complete"
+        assert any(t.tool == "prediction" for t in inv.tasks)
+        prediction_section = inv.report.sections["prediction"]
+        assert prediction_section is not None
+        assert prediction_section["applicable"] is True
+        assert 0.0 <= prediction_section["risk_score"] <= 1.0
+
     def test_timeline_question_plans_a_timeline_task_and_populates_report(self):
         inv = run_investigation(
             "Give me a chronological timeline of this patient's care history.",

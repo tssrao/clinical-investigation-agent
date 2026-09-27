@@ -25,6 +25,7 @@ from app.agents.schemas import TaskSpec
 from app.core.config import settings
 from app.db.models.investigation import Artifact, Investigation, Report, Task
 from app.db.session import SessionLocal
+from app.tools.prediction_tool import predict_readmission_risk
 from app.tools.sql_tool import run_sql_tool
 from app.tools.timeline_tool import build_timeline
 
@@ -79,6 +80,21 @@ def _execute_task(tool: str, purpose: str, patient_id: str | None) -> tuple[dict
         })
         return content, f"timeline for patient {patient_id}", "timeline", True
 
+    if tool == "prediction":
+        if not patient_id:
+            return {"error": "prediction requires a patient_id"}, None, "prediction", False
+        result = predict_readmission_risk(patient_id)
+        content = _json_safe({
+            "patient_id": result.patient_id,
+            "applicable": result.applicable,
+            "risk_score": result.risk_score,
+            "reference_encounter_id": result.reference_encounter_id,
+            "features": result.features,
+            "reason": result.reason,
+        })
+        source = "readmission_model (MLflow, alias: champion)"
+        return content, source, "prediction", True  # ran successfully either way; "applicable" carries the outcome
+
     raise NotImplementedError(f"tool '{tool}' is not implemented yet (Phase 3)")
 
 
@@ -102,6 +118,15 @@ def _summarize_artifacts(artifacts: list[Artifact]) -> str:
                 f"- [{a.type}] {content.get('event_count')} event(s) spanning {first_last} | "
                 f"earliest events: {sample}"
             )
+        elif a.type == "prediction":
+            if content.get("applicable"):
+                lines.append(
+                    f"- [{a.type}] 30-day readmission risk score: {content.get('risk_score'):.3f} "
+                    f"(0-1 scale, from a statistical model trained on synthetic data - not "
+                    f"clinically validated) based on {content.get('features')}"
+                )
+            else:
+                lines.append(f"- [{a.type}] not applicable: {content.get('reason')}")
         else:
             lines.append(f"- [{a.type}] {content}")
     return "\n".join(lines) if lines else "(no evidence gathered yet)"
@@ -213,15 +238,16 @@ def run_investigation(question: str, patient_id: str | None = None, role: str | 
             question, plan.goal, _summarize_artifacts(all_artifacts)
         )
         timeline_artifact = next((a for a in all_artifacts if a.type == "timeline"), None)
+        prediction_artifact = next((a for a in all_artifacts if a.type == "prediction"), None)
         sections = {
             "investigation_timeline": timeline_artifact.content if timeline_artifact else None,
             "evidence": [
                 {"artifact_id": a.id, "type": a.type, "source": a.source, "content": a.content}
                 for a in all_artifacts
             ],
-            "supporting_literature": [],  # Literature tool: Phase 3
-            "visualizations": [],  # Visualization tool: Phase 3
-            "prediction": None,  # Prediction tool: Phase 3
+            "supporting_literature": [],  # Literature tool: not yet built
+            "visualizations": [],  # Visualization tool: not yet built
+            "prediction": prediction_artifact.content if prediction_artifact else None,
             "references": [],
         }
         report = Report(

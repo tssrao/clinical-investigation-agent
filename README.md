@@ -139,3 +139,21 @@ Then load whatever's present (RxNorm is skipped with a message if its file isn't
 cd backend
 uv run python scripts/load_lookup_data.py
 ```
+
+### MLflow (Prediction Tool)
+
+Local tracking server (interim setup — a background process from `backend/.venv`, not yet a docker-compose service):
+
+```bash
+cd backend
+uv run mlflow server --backend-store-uri "sqlite:///../data/mlflow/mlflow.db" --default-artifact-root "../data/mlflow/artifacts" --host 127.0.0.1 --port 5000
+```
+
+Verify it's up: `curl http://127.0.0.1:5000/health` should return `OK`. Leave it running in its own terminal — `prediction_tool.py` needs it reachable at request time (it fails fast with a clear error if it isn't, rather than hanging).
+
+Train and register the readmission model (safe to re-run — registers a new version and promotes it to the `champion` alias each time):
+
+```bash
+cd backend
+uv run python scripts/train_readmission_model.py
+```

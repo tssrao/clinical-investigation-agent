@@ -13,7 +13,7 @@ from openai import OpenAI
 from app.agents.schemas import InvestigationPlan
 from app.core.config import settings
 
-AVAILABLE_TOOLS = ["sql", "timeline"]
+AVAILABLE_TOOLS = ["sql", "timeline", "prediction"]
 
 SYSTEM_PROMPT = (
     "You are the Planner for a clinical investigation system. Given a question "
@@ -27,6 +27,12 @@ SYSTEM_PROMPT = (
     "patient id is given, and never for a question that isn't about a specific "
     "patient's history/chronology (a simple count or lookup doesn't need a "
     "timeline just because a patient id happens to be present).\n\n"
+    "The prediction tool estimates 30-day hospital readmission risk for a "
+    "patient (requires a patient id). It's only meaningful for questions "
+    "actually asking about readmission/future-visit risk - don't plan it "
+    "reflexively just because a patient id is present. It's a statistical "
+    "model trained on synthetic data, not a clinically validated tool - the "
+    "Report will already carry that caveat, don't need to restate it in the plan.\n\n"
     "Scope the plan to the question - a trivial factual lookup needs exactly one "
     "sql task, not an elaborate investigation. Only plan multiple tasks when the "
     "question genuinely requires gathering several distinct pieces of evidence."
