@@ -9,7 +9,9 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-ToolName = Literal["sql", "timeline", "medication", "literature", "prediction", "visualization"]
+ToolName = Literal[
+    "sql", "timeline", "medication", "literature", "prediction", "visualization", "drug_interactions"
+]
 
 
 class TaskSpec(BaseModel):

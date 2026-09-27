@@ -24,9 +24,11 @@ from app.db.base import Base
 InvestigationStatus = Literal["pending", "running", "needs_more_evidence", "reviewed", "complete"]
 TaskStatus = Literal["pending", "running", "complete", "skipped", "failed"]
 # "report" is a real tool (assembles the Report); "reviewer" is orchestration, not a task.
-ToolName = Literal["sql", "timeline", "medication", "literature", "prediction", "visualization", "report"]
+ToolName = Literal[
+    "sql", "timeline", "medication", "literature", "prediction", "visualization", "drug_interactions", "report"
+]
 ArtifactType = Literal[
-    "sql_result", "timeline", "medication_list", "literature", "prediction", "visualization"
+    "sql_result", "timeline", "medication_list", "literature", "prediction", "visualization", "drug_interaction"
 ]
 Role = Literal["doctor", "insurance_adjuster"]
 

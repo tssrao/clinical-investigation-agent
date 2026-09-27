@@ -167,4 +167,13 @@ cd backend
 uv run python scripts/ingest_literature.py
 ```
 
+### Drug interaction rules (Drug Interaction Tool)
+
+A hand-curated table of 20 well-established drug-drug interactions (see `app/db/models/drug_interactions.py`), matched against medication names already loaded (not RxNorm codes):
+
+```bash
+cd backend
+uv run python scripts/seed_drug_interactions.py
+```
+
 Safe to re-run (upserts by PMID). Uses PubMed's public E-utilities API — no key required at this volume, but the search endpoint is occasionally down on NCBI's end (confirmed via `einfo` still working while `esearch` returns a backend error); the script retries with backoff, but if it still fails, it's an NCBI outage, not a bug — just try again later.

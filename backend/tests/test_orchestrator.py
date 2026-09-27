@@ -128,3 +128,14 @@ class TestRunInvestigationIntegration:
         assert timeline_section["event_count"] > 0
         # chronological, and the very first known event for this patient
         assert timeline_section["events"][0]["event_date"] == "1958-05-31T22:17:10+00:00"
+
+    def test_interaction_question_plans_a_drug_interactions_task(self):
+        inv = run_investigation(
+            "Are there any dangerous drug interactions among this patient's current medications?",
+            patient_id="1050cd48-cb09-1f0e-8441-4d587e8bcb2f",  # verified: real triple-whammy match
+        )
+        assert inv.status == "complete"
+        assert any(t.tool == "drug_interactions" for t in inv.tasks)
+        drug_interaction_artifacts = [e for e in inv.report.sections["evidence"] if e["type"] == "drug_interaction"]
+        assert drug_interaction_artifacts
+        assert drug_interaction_artifacts[0]["content"]["match_count"] >= 2

@@ -13,7 +13,7 @@ from openai import OpenAI
 from app.agents.schemas import InvestigationPlan
 from app.core.config import settings
 
-AVAILABLE_TOOLS = ["sql", "timeline", "prediction"]
+AVAILABLE_TOOLS = ["sql", "timeline", "prediction", "drug_interactions"]
 
 SYSTEM_PROMPT = (
     "You are the Planner for a clinical investigation system. Given a question "
@@ -21,8 +21,8 @@ SYSTEM_PROMPT = (
     "required and emit a structured Investigation Plan - a restated goal plus a "
     "list of tasks, each assigned to one tool.\n\n"
     f"Tools currently available: {', '.join(AVAILABLE_TOOLS)}. Do not plan a task "
-    "for any other tool, even if it would conceptually help - medication/"
-    "literature/prediction/visualization tools are not yet built.\n\n"
+    "for any other tool, even if it would conceptually help - a full medication-"
+    "normalization tool, literature search, and visualization are not yet built.\n\n"
     "The timeline tool requires a patient id - only plan a timeline task when a "
     "patient id is given, and never for a question that isn't about a specific "
     "patient's history/chronology (a simple count or lookup doesn't need a "
@@ -33,6 +33,12 @@ SYSTEM_PROMPT = (
     "reflexively just because a patient id is present. It's a statistical "
     "model trained on synthetic data, not a clinically validated tool - the "
     "Report will already carry that caveat, don't need to restate it in the plan.\n\n"
+    "The drug_interactions tool checks a patient's CURRENT medications against a "
+    "small hand-curated table of ~20 well-known drug-drug interaction patterns "
+    "(requires a patient id). Only plan it for questions actually about "
+    "medication safety/interactions/side effects, or as part of a root-cause "
+    "investigation where a medication-driven cause is plausible (e.g. unexplained "
+    "lab changes) - not reflexively for every patient-scoped question.\n\n"
     "Scope the plan to the question - a trivial factual lookup needs exactly one "
     "sql task, not an elaborate investigation. Only plan multiple tasks when the "
     "question genuinely requires gathering several distinct pieces of evidence."

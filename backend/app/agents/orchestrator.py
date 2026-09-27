@@ -25,6 +25,7 @@ from app.agents.schemas import TaskSpec
 from app.core.config import settings
 from app.db.models.investigation import Artifact, Investigation, Report, Task
 from app.db.session import SessionLocal
+from app.tools.interaction_tool import check_drug_interactions
 from app.tools.prediction_tool import predict_readmission_risk
 from app.tools.sql_tool import run_sql_tool
 from app.tools.timeline_tool import build_timeline
@@ -95,6 +96,23 @@ def _execute_task(tool: str, purpose: str, patient_id: str | None) -> tuple[dict
         source = "readmission_model (MLflow, alias: champion)"
         return content, source, "prediction", True  # ran successfully either way; "applicable" carries the outcome
 
+    if tool == "drug_interactions":
+        if not patient_id:
+            return {"error": "drug_interactions requires a patient_id"}, None, "drug_interaction", False
+        matches = check_drug_interactions(patient_id)
+        content = _json_safe({
+            "patient_id": patient_id,
+            "match_count": len(matches),
+            "matches": [
+                {
+                    "name": m.name, "severity": m.severity, "mechanism": m.mechanism,
+                    "reference": m.reference, "matched_medications": m.matched_medications,
+                }
+                for m in matches
+            ],
+        })
+        return content, "drug_interactions rules table (hand-curated)", "drug_interaction", True
+
     raise NotImplementedError(f"tool '{tool}' is not implemented yet (Phase 3)")
 
 
@@ -127,6 +145,12 @@ def _summarize_artifacts(artifacts: list[Artifact]) -> str:
                 )
             else:
                 lines.append(f"- [{a.type}] not applicable: {content.get('reason')}")
+        elif a.type == "drug_interaction":
+            if content.get("match_count"):
+                summaries = [f"{m['name']} ({m['severity']})" for m in content.get("matches", [])]
+                lines.append(f"- [{a.type}] {content.get('match_count')} known interaction(s) found: {summaries}")
+            else:
+                lines.append(f"- [{a.type}] no known interactions found among current medications")
         else:
             lines.append(f"- [{a.type}] {content}")
     return "\n".join(lines) if lines else "(no evidence gathered yet)"

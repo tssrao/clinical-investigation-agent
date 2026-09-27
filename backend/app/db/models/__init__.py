@@ -20,6 +20,7 @@ from app.db.models.billing import Claim, ClaimTransaction, Payer, PayerTransitio
 from app.db.models.lookups import LoincCode, RxNormCode
 from app.db.models.investigation import Investigation, Task, Artifact, Report
 from app.db.models.literature import LiteratureAbstract
+from app.db.models.drug_interactions import DrugInteraction
 
 __all__ = [
     "Patient",
@@ -47,4 +48,5 @@ __all__ = [
     "Artifact",
     "Report",
     "LiteratureAbstract",
+    "DrugInteraction",
 ]
