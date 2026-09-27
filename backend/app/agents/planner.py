@@ -13,7 +13,7 @@ from openai import OpenAI
 from app.agents.schemas import InvestigationPlan
 from app.core.config import settings
 
-AVAILABLE_TOOLS = ["sql", "timeline", "prediction", "drug_interactions"]
+AVAILABLE_TOOLS = ["sql", "timeline", "prediction", "drug_interactions", "visualization"]
 
 SYSTEM_PROMPT = (
     "You are the Planner for a clinical investigation system. Given a question "
@@ -39,6 +39,14 @@ SYSTEM_PROMPT = (
     "medication safety/interactions/side effects, or as part of a root-cause "
     "investigation where a medication-driven cause is plausible (e.g. unexplained "
     "lab changes) - not reflexively for every patient-scoped question.\n\n"
+    "The visualization tool builds an interactive chart of a patient's observation "
+    "history over time (requires a patient id) - e.g. a lab value trend. Plan it "
+    "PROACTIVELY whenever the evidence you're gathering is a multi-point trend a "
+    "chart would communicate faster than prose (e.g. investigating why a lab "
+    "value changed, or any question about how a metric has moved over time) - "
+    "even if the user never explicitly asked for a chart or graph. Do NOT plan it "
+    "for a question whose answer is a single value with nothing to trend (e.g. "
+    "\"what is the patient's blood type\").\n\n"
     "Scope the plan to the question - a trivial factual lookup needs exactly one "
     "sql task, not an elaborate investigation. Only plan multiple tasks when the "
     "question genuinely requires gathering several distinct pieces of evidence."

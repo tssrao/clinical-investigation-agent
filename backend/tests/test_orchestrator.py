@@ -139,3 +139,15 @@ class TestRunInvestigationIntegration:
         drug_interaction_artifacts = [e for e in inv.report.sections["evidence"] if e["type"] == "drug_interaction"]
         assert drug_interaction_artifacts
         assert drug_interaction_artifacts[0]["content"]["match_count"] >= 2
+
+    def test_chart_request_plans_a_visualization_task_and_populates_report(self):
+        inv = run_investigation(
+            "Show me a chart of this patient's creatinine levels over time.",
+            patient_id="23d14605-b881-65ba-c09e-0ecf40ebfeff",  # verified: 10 real creatinine readings
+        )
+        assert inv.status == "complete"
+        assert any(t.tool == "visualization" for t in inv.tasks)
+        visualizations = inv.report.sections["visualizations"]
+        assert len(visualizations) >= 1
+        assert visualizations[0]["metric_code"] == "38483-4"
+        assert "data" in visualizations[0]["plotly_figure"]

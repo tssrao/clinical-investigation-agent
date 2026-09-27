@@ -29,6 +29,7 @@ from app.tools.interaction_tool import check_drug_interactions
 from app.tools.prediction_tool import predict_readmission_risk
 from app.tools.sql_tool import run_sql_tool
 from app.tools.timeline_tool import build_timeline
+from app.tools.visualization_tool import build_chart_for_patient
 
 MAX_REVIEW_ROUNDS = 2
 
@@ -113,6 +114,23 @@ def _execute_task(tool: str, purpose: str, patient_id: str | None) -> tuple[dict
         })
         return content, "drug_interactions rules table (hand-curated)", "drug_interaction", True
 
+    if tool == "visualization":
+        if not patient_id:
+            return {"error": "visualization requires a patient_id"}, None, "visualization", False
+        result = build_chart_for_patient(patient_id, purpose)
+        content = _json_safe({
+            "patient_id": patient_id,
+            "applicable": result.applicable,
+            "metric_code": result.metric_code,
+            "metric_description": result.metric_description,
+            "units": result.units,
+            "data_points": result.data_points,
+            "plotly_figure": result.plotly_figure,
+            "reason": result.reason,
+        })
+        source = f"observations (code: {result.metric_code})" if result.applicable else None
+        return content, source, "visualization", True  # ran successfully either way; "applicable" carries the outcome
+
     raise NotImplementedError(f"tool '{tool}' is not implemented yet (Phase 3)")
 
 
@@ -151,6 +169,15 @@ def _summarize_artifacts(artifacts: list[Artifact]) -> str:
                 lines.append(f"- [{a.type}] {content.get('match_count')} known interaction(s) found: {summaries}")
             else:
                 lines.append(f"- [{a.type}] no known interactions found among current medications")
+        elif a.type == "visualization":
+            if content.get("applicable"):
+                points = content.get("data_points", [])
+                lines.append(
+                    f"- [{a.type}] chart built: {content.get('metric_description')} "
+                    f"({len(points)} data points, {points[0]['date']} to {points[-1]['date']})"
+                )
+            else:
+                lines.append(f"- [{a.type}] not applicable: {content.get('reason')}")
         else:
             lines.append(f"- [{a.type}] {content}")
     return "\n".join(lines) if lines else "(no evidence gathered yet)"
@@ -263,14 +290,17 @@ def run_investigation(question: str, patient_id: str | None = None, role: str | 
         )
         timeline_artifact = next((a for a in all_artifacts if a.type == "timeline"), None)
         prediction_artifact = next((a for a in all_artifacts if a.type == "prediction"), None)
+        visualization_artifacts = [
+            a.content for a in all_artifacts if a.type == "visualization" and a.content.get("applicable")
+        ]
         sections = {
             "investigation_timeline": timeline_artifact.content if timeline_artifact else None,
             "evidence": [
                 {"artifact_id": a.id, "type": a.type, "source": a.source, "content": a.content}
                 for a in all_artifacts
             ],
-            "supporting_literature": [],  # Literature tool: not yet built
-            "visualizations": [],  # Visualization tool: not yet built
+            "supporting_literature": [],  # Literature tool: real corpus blocked on a PubMed outage
+            "visualizations": visualization_artifacts,
             "prediction": prediction_artifact.content if prediction_artifact else None,
             "references": [],
         }
