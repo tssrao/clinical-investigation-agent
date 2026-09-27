@@ -86,9 +86,24 @@ def _build_messages(question: str, schema_context: str, join_notes: str,
     ]
     if previous_sql is not None:
         messages.append({"role": "assistant", "content": previous_sql})
+        repair_hint = ""
+        if previous_error and "does not exist" in previous_error.lower() and '"' not in previous_error:
+            # near-certainly an unquoted-identifier bug: Postgres lowercases an
+            # unquoted name, so the error message names a lowercase column that
+            # "doesn't exist" only because the real (uppercase) one was never
+            # quoted - a recurring mistake worth calling out explicitly rather
+            # than trusting the raw Postgres error to be self-explanatory.
+            repair_hint = (
+                " This usually means a column name was not wrapped in double "
+                "quotes - re-check EVERY column reference against the schema "
+                "above and quote each one exactly (e.g. m.\"PATIENT\", not m.PATIENT)."
+            )
         messages.append({
             "role": "user",
-            "content": f"That query failed with this error:\n{previous_error}\n\nFix it and output only the corrected SQL.",
+            "content": (
+                f"That query failed with this error:\n{previous_error}\n{repair_hint}\n\n"
+                "Fix it and output only the corrected SQL."
+            ),
         })
     return messages
 
